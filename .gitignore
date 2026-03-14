@@ -1,0 +1,25 @@
+.vault.pw
+*.pw
+*.temp
+*.tmp
+
+# --- Python Environment ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- UV & Virtual Environments ---
+# uv-specific environment folder
+.venv/
+.python-version
+
+# --- Distribution / Packaging ---
+dist/
+build/
+*.egg-info/
+
+# --- IDEs & Editors ---
+.vscode/
+.idea/
+.env
+.DS_Store (macOS)
