@@ -2,21 +2,47 @@
 
 A lightweight CLI password manager built with Unix environments in mind. Designed for users who want to pipe credentials into other applications or store account data locally.
 
-⚠️ Disclaimer: This project was developed as a personal security tool. While it implements industry-standard cryptographic functions (Argon2id, Fernet/AES), Always evaluate your own security needs before using my personal project for sensitive data ⚠️.
+⚠️ Disclaimer: This project was developed as a personal security tool. While it implements standard cryptographic functions (Argon2id, Fernet/AES), Always evaluate your own security needs before using my personal project for sensitive data.
 
 ## Features
 - Argon2id to derive encryption keys.
 - Fernet (AES-128 in CBC mode with HMAC).
 - Atomic saves.
-- Support for --password-only flags to allow seamless piping into other CLI tools.
+- Support for piping into other CLI tools.
 
+## How To Use
+By default, PW Vault inits an encrypted vault file in the OS standard application data directory upon the first execution of any command.
+
+### Custom Vault Location
+You can override the default storage location by setting the VAULT_PATH environment variable. This is useful for keeping separate vaults or storing your vault on a secure external drive.
+    export VAULT_PATH="./my_secret_vault.pw"
+    ./pw-vault list
+
+### Adding a New Account
+To add a service, provide the service name and optional flags for the username and email. The application will prompt you for the password to ensure it is not saved in your shell history.
+    ./pw-vault create github -u my_username -e user@example.com
+
+### Updating an Account
+You can update specific fields without affecting others. To trigger a password change prompt, use the -p flag.
+    ./pw-vault update github -u new_username -p
+
+### Get Account Data
+You can get account data by specifing the service.
+    ./pw-vault get github
+
+For use in scripts or Unix pipelines, use the --password-only (or -p) flag. This outputs the raw password to stdout without any labels or metadata, allowing you to pipe it directly to your clipboard or another application.
+    ./pw-vault get github -p | .......
+
+### List All Accounts
+    ./pw-vault list
+
+### Deleting an Account
+    ./pw-vault delete github
 
 ## 🥅 Goals
-
 - [x] Basic CRUD CLI functionality
 - [x] Secure local file I/O
-- [ ] Automated Password Generation
-- [ ] Cloud Sync: Remote vault retrieval
+- [ ] Automated Password Generation and account presets
 - [ ] Notes and Secure File storage
-- [ ] Web client / server architecture
+- [ ] Cloud Sync through web application
 - [ ] Optional 2FA support
