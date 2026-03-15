@@ -24,10 +24,18 @@ To add a service, provide the service name and optional flags for the username a
 
     ./pw-vault create github -u my_username -e user@example.com
 
-### Updating an Account
-You can update specific fields without affecting others. To trigger a password change prompt, use the -p flag.
+If you wish for a complex password to be generated instead, use the -g flag. 
 
-    ./pw-vault update github -u new_username -p
+    ./pw-vault create github -u my_username -e user@example.com -g
+
+If you use the same username and / or email address, a preset can be generated, allowing quick account creation.
+
+    ./pw-vault create github -s -g 
+
+### Updating an Account
+You can update specific fields without affecting others. To trigger a password change prompt, use the -P flag.
+
+    ./pw-vault update github -u new_username -P
 
 ### Get Account Data
 You can get account data by specifing the service.
@@ -47,6 +55,17 @@ Provide the "list" command to view a list of services
 To permenently delete a service, use the delete command. 
 
     ./pw-vault delete github
+
+### Generating Passwords
+The application will generate secure passwords depending on requirements.
+⚠️ The outputs the password to the stdout ⚠️
+
+    ./pw-vault generate
+
+### Setting presets
+If you use the same username and or email address, this can be presaved and used during account creation.
+
+    ./pw-vault set-preset -u my_username -e user@example.com
 
 ## 🥅 Goals
 - [x] Basic CRUD CLI functionality
