@@ -2,7 +2,7 @@
 
 A lightweight CLI password manager built with Unix environments in mind. Designed for users who want to pipe credentials into other applications or store account data locally.
 
-    ⚠️ Disclaimer ⚠️: This project was developed as a personal security tool. While it implements industry-standard cryptographic functions (Argon2id, Fernet/AES), Always evaluate your own security needs before using my personal project for sensitive data.
+⚠️ Disclaimer: This project was developed as a personal security tool. While it implements industry-standard cryptographic functions (Argon2id, Fernet/AES), Always evaluate your own security needs before using my personal project for sensitive data ⚠️.
 
 ## Features
 - Argon2id to derive encryption keys.
@@ -13,10 +13,10 @@ A lightweight CLI password manager built with Unix environments in mind. Designe
 
 ## 🥅 Goals
 
-[x] Basic CRUD CLI functionality
-[x] Secure local file I/O
-[ ] Automated Password Generation
-[ ] Cloud Sync: Remote vault retrieval
-[ ] Notes and Secure File storage
-[ ] Web client / server architecture
-[ ] Optional 2FA support
+- [x] Basic CRUD CLI functionality
+- [x] Secure local file I/O
+- [ ] Automated Password Generation
+- [ ] Cloud Sync: Remote vault retrieval
+- [ ] Notes and Secure File storage
+- [ ] Web client / server architecture
+- [ ] Optional 2FA support
