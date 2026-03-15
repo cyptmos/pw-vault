@@ -15,28 +15,37 @@ By default, PW Vault inits an encrypted vault file in the OS standard applicatio
 
 ### Custom Vault Location
 You can override the default storage location by setting the VAULT_PATH environment variable. This is useful for keeping separate vaults or storing your vault on a secure external drive.
+
     export VAULT_PATH="./my_secret_vault.pw"
     ./pw-vault list
 
 ### Adding a New Account
 To add a service, provide the service name and optional flags for the username and email. The application will prompt you for the password to ensure it is not saved in your shell history.
+
     ./pw-vault create github -u my_username -e user@example.com
 
 ### Updating an Account
 You can update specific fields without affecting others. To trigger a password change prompt, use the -p flag.
+
     ./pw-vault update github -u new_username -p
 
 ### Get Account Data
 You can get account data by specifing the service.
+
     ./pw-vault get github
 
 For use in scripts or Unix pipelines, use the --password-only (or -p) flag. This outputs the raw password to stdout without any labels or metadata, allowing you to pipe it directly to your clipboard or another application.
+
     ./pw-vault get github -p | .......
 
 ### List All Accounts
+Provide the "list" command to view a list of services
+
     ./pw-vault list
 
 ### Deleting an Account
+To permenently delete a service, use the delete command. 
+
     ./pw-vault delete github
 
 ## 🥅 Goals
