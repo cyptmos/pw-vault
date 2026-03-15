@@ -3,9 +3,31 @@ from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
 from utils import print_error, print_msg, print_password
+from platformdirs import user_data_dir
 
+
+
+def get_default_vault_path() -> Path:
+    """Determines where to store the vault file based on operating system"""
+    # Check for user specified vault path.
+    env_path = os.getenv('VAULT_PATH')
+    if env_path:
+        return Path(env_path)
+    
+    # Use standard OS location
+    data_dir = Path(user_data_dir(APP_NAME, APP_AUTHOR, APP_VERSION))
+    
+    # Ensure the directory exists 
+    data_dir.mkdir(parents=True, exist_ok=True)
+    
+    return data_dir / ".vault.pw"
+
+
+APP_NAME = "pw-vault"
+APP_AUTHOR = "cyptnmos"
+APP_VERSION = "0.2"
 SALT_SIZE = 16
-VAULT_PATH = Path(os.getenv('VAULT_PATH', '.vault.pw'))
+VAULT_PATH = get_default_vault_path()
 ARGON2_PARAMS = {
     "iterations": 3,
     "lanes": 4,
