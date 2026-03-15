@@ -51,7 +51,7 @@ To permenently delete a service, use the delete command.
 ## 🥅 Goals
 - [x] Basic CRUD CLI functionality
 - [x] Secure local file I/O
-- [ ] Automated Password Generation and account presets
+- [x] Automated Password Generation and account presets
 - [ ] Notes and Secure File storage
 - [ ] Cloud Sync through web application
 - [ ] Optional 2FA support

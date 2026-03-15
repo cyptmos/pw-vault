@@ -2,10 +2,8 @@ import argparse, base64, sys, os, getpass, json, uuid, time
 from pathlib import Path
 from cryptography.fernet import Fernet, InvalidToken
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
-from utils import print_error, print_msg, print_password
+from utils import print_error, print_msg, print_password, generate_complex_password, generate_common_password, generate_safe_password
 from platformdirs import user_data_dir
-
-
 
 def get_default_vault_path() -> Path:
     """Determines where to store the vault file based on operating system"""
@@ -22,7 +20,7 @@ def get_default_vault_path() -> Path:
     
     return data_dir / ".vault.pw"
 
-
+# Some constants. Should probably explore putting thses in an .env file
 APP_NAME = "pw-vault"
 APP_AUTHOR = "cyptnmos"
 APP_VERSION = "0.2"
@@ -115,7 +113,7 @@ class VaultContext:
 
         # create base empty dict
         # TODO: This should be constructed elsewhere to allow for dict changes outside of this class
-        self.data = {"version": 0.1, "accounts": {}}
+        self.data = {"version": APP_VERSION, "presets": {"username": None, "email": None},"accounts": {}}
 
         # Write changes to file
         self.save()
@@ -173,22 +171,32 @@ def handle_create(args, vault: VaultContext):
         print_error("Service already exists! Use 'update'.")
         return
     
-    new_password = getpass.getpass(f"{service} Password: ")
+    new_password = None
+
+    if args.generate_password:
+        new_password = generate_complex_password()
+    else:
+        new_password = getpass.getpass(f"{service} Password: ")
 
     vault.data['accounts'][service] = {
         # ID field for use in future plans. maybe multiple services and/or cloud integration
         "id": str(uuid.uuid4()),
-        "username": args.username or None,
-        "email": args.email or None,
         "password": new_password,
         "created_at": time.time(),
         "updated_at": time.time()
     }
 
+    if args.use_presets:
+        vault.data['accounts'][service]["username"] = vault.data['presets']['username'] or None
+        vault.data['accounts'][service]["email"] = vault.data['presets']['email'] or None
+    else:
+        vault.data['accounts'][service]["username"] = args.username or None
+        vault.data['accounts'][service]["email"] = args.email or None
+
     vault.save()
     print_msg(f"{service} added to vault!")
 
-    # once again, GC should get this.
+    # once again, GC should get this. Should consider manual byte array
     del new_password
 
 def handle_update(args, vault: VaultContext):
@@ -240,8 +248,44 @@ def handle_list(args, vault: VaultContext):
     # TODO: List all accounts with certain credentials
     # TODO: Search accounts?
     for account, _ in vault.data["accounts"].items():
-        print_msg(account)
+        print(account)
 
+def handle_generate(args, vault: VaultContext):
+    """Generate random passwords"""
+    if args.safe:
+        if args.password_only:
+            print(f"{generate_safe_password()}", end="")
+            return
+        print_msg(f"{generate_safe_password()}")
+        return
+    
+    if args.common:
+        if args.password_only:
+            print(f"{generate_common_password()}", end="")
+            return
+        print_msg(f"{generate_common_password()}")
+        return
+    
+    if args.password_only:
+        # print password without a \n
+        print(f"{generate_complex_password()}", end="")
+        return
+    
+    print_msg(f"{generate_complex_password()}")
+    return
+
+def handle_preset(args, vault: VaultContext):
+
+    if args.username is not None:
+        vault.data['presets']["username"] = args.username
+        print_msg(f"{args.username} set as a preset username")
+
+    if args.email is not None:
+        vault.data['presets']["email"] = args.username
+        print_msg(f"{args.email} set as a preset email")
+
+    vault.save()
+    
 def main():
     # Init the parser
     parser = argparse.ArgumentParser(
@@ -251,25 +295,25 @@ def main():
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     # "create" command subparser
-    create_parser = subparsers.add_parser('create', help="Create an entry")
-    create_parser.add_argument("service", type=str, help="Provide a service name")
-    create_parser.add_argument("-e","--email", type=str, help="Provide an email")
-    create_parser.add_argument("-u","--username", type=str, help="Provide the username")
-
-    # The following is INSECURE as the value is held in plain text bash history. Only for testing. 
-    # create_parser.add_argument("-p","--password", type=str, help="Provide the password")
+    create_parser = subparsers.add_parser('create', help="Create an entry.")
+    create_parser.add_argument("service", type=str, help="Provide a service name.")
+    create_parser.add_argument("-e","--email", type=str, help="Provide an email.")
+    create_parser.add_argument("-u","--username", type=str, help="Provide the username.")
+    create_parser.add_argument("-s","--use-presets", action='store_true', help="Use saved presets to create the account.")
+    create_parser.add_argument("-g","--generate-password", action='store_true', help="Automatically generate a strong complex password")
 
     # "get" command subparser
-    get_parser = subparsers.add_parser('get', help="Get an Account")
-    get_parser.add_argument("service", type=str, help="Provide a service name to get")
-    get_parser.add_argument("-p", "--password-only", action='store_true') 
+    get_parser = subparsers.add_parser('get', help="Get an Account.")
+    get_parser.add_argument("service", type=str, help="Provide a service name to get.")
+    get_parser.add_argument("-p", "--password-only", action='store_true', help="Output only the password.") 
 
     # "update" command subparser
     update_parser = subparsers.add_parser('update', help="Update an account")
     update_parser.add_argument("service", type=str, help="Provide a service name")
     update_parser.add_argument("-e","--email", type=str, help="Provide an email")
     update_parser.add_argument("-u","--username", type=str, help="Provide the username")
-    update_parser.add_argument("-p", "--password", action='store_true', help="Indicate if the password needs to be changed") 
+    # TODO: Change this to avoid confusion with other -p commands
+    update_parser.add_argument("-P", "--password", action='store_true', help="Indicate if the password needs to be changed") 
 
     # "delete" command subparser
     delete_parser = subparsers.add_parser('delete', help="Delete an Account")
@@ -278,7 +322,19 @@ def main():
     # "list" command subparser
     list_parser = subparsers.add_parser('list', help="List all services")
 
+    # "generate" command subparser
+    generate_parser = subparsers.add_parser('generate', help="Generate a secure 24-character password")
+    generate_parser.add_argument("-c", "--common", action='store_true', help="Adhere to common service password requirements. 16-characters")
+    generate_parser.add_argument("-s", "--safe", action='store_true', help="Use only 'safe' characters such as letters and numbers")
+    generate_parser.add_argument("-p", "--password-only", action='store_true', help="Output only the password.")
 
+    # "presets" command subparser
+    preset_parser = subparsers.add_parser("set-preset", help="Setup a default username and email for generated accounts")
+    preset_parser.add_argument("-u", "--username", type=str, help="Set the default username")
+    preset_parser.add_argument("-e", "--email", type=str, help="Set the default email")
+
+
+    # Arg parser
     args = parser.parse_args()
 
     # Init vault context
@@ -291,7 +347,9 @@ def main():
         "get": handle_get,
         "update": handle_update,
         "delete": handle_delete,
-        "list": handle_list
+        "list": handle_list, 
+        "generate": handle_generate,
+        "set-preset": handle_preset
     }
     
     handler = commands.get(args.command)
