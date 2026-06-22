@@ -1,37 +1,25 @@
-import argparse, base64, sys, os, getpass, json, uuid, time
+import argparse, base64, sys, os, getpass, json, uuid, time, requests, struct
 from pathlib import Path
-from cryptography.fernet import Fernet, InvalidToken
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives.kdf.argon2 import Argon2id
-from utils import print_error, print_msg, print_password, generate_complex_password, generate_common_password, generate_safe_password
-from platformdirs import user_data_dir
+from config import *
+from utils import (
+    print_error,
+    print_msg,
+    print_password,
+    generate_complex_password,
+    generate_common_password,
+    generate_safe_password,
+    save_api_token,
+    get_api_token,
+    get_default_vault_path,
+    api_push_binary,
+    api_pull_binary,
+    get_valid_api_token
+)
 
-def get_default_vault_path() -> Path:
-    """Determines where to store the vault file based on operating system"""
-    # Check for user specified vault path.
-    env_path = os.getenv('VAULT_PATH')
-    if env_path:
-        return Path(env_path)
-    
-    # Use standard OS location
-    data_dir = Path(user_data_dir(APP_NAME, APP_AUTHOR, APP_VERSION))
-    
-    # Ensure the directory exists 
-    data_dir.mkdir(parents=True, exist_ok=True)
-    
-    return data_dir / ".vault.pw"
-
-# Some constants. Should probably explore putting thses in an .env file
-APP_NAME = "pw-vault"
-APP_AUTHOR = "cyptnmos"
-APP_VERSION = "0.2"
-SALT_SIZE = 16
 VAULT_PATH = get_default_vault_path()
-ARGON2_PARAMS = {
-    "iterations": 3,
-    "lanes": 4,
-    "memory_cost": 64 * 1024,
-    "length": 32
-}
 
 class VaultContext:
     """Handles Vault context, crypto and file I/O"""
@@ -40,14 +28,25 @@ class VaultContext:
         # File path the vault.pw file will be created / read from
         self.path: Path = path
 
-        # crypto salt bytes from the vault.pw file
+        # Crypto salt bytes from the vault.pw file
         self.salt: bytes = None
 
-        # Fernet crypto key
-        self.key: Fernet = None
+        # Crypto nonce value
+        self.nonce: bytes = None
+
+        # Crypto key
+        self.key: AESGCM = None
 
         # Decrypted vault
         self.data = None
+
+        # Accociated metadata
+        self.metadata = None
+
+        # private vault values
+        self._file_header = b'PWVLT'
+        self._container_version = 1
+        self._header_size = 4
 
     def load_file(self):
         """Attempt to load the vault.pw file. Create one if it doesn't exist."""
@@ -61,32 +60,69 @@ class VaultContext:
         # Read bytes from the specified vault.pw file path
         raw_vault = self.path.read_bytes()
 
-        # Check for file Corruption. 
-        # TODO: CCurrently 32 reflects the key size. Change this to reflect base size of encrypted data within a new vault file.
-        if len(raw_vault) < 32:
-            self.path.unlink()
-            print_error("Vault appears corrupted. Vault Deleted!")
-            sys.exit(1)
+        # check for file integrity issues
+        if len(raw_vault) < len(self._file_header) + 1 + self._header_size:
+            raise ValueError("Vault appears corrupted!")
 
-        # Obtain the salt from the start of the file.
-        self.salt = raw_vault[:SALT_SIZE]
+        # To track where we are at in the binary file
+        offset = 0
+
+        # First, get the fileheader and update the offset. 
+        file_header = raw_vault[offset:offset + len(self._file_header)]
+        offset += len(self._file_header)
+
+        # Check the file header is correct, otherwise this might be the wrong file.
+        if file_header != self._file_header:
+            raise ValueError("Vault file is either wrong or corrupted!")
+        
+        # Now get the container version and update the offset
+        container_version = raw_vault[offset]
+        offset += 1
+
+        # Check if the container version is correct
+        if container_version != self._container_version:
+            raise ValueError("Vault file version mismatch!")
+        
+        # Get the header information by first determining how much binary data it is. 
+        header_length = struct.unpack(">I", raw_vault[offset:offset + self._header_size])[0]
+        offset += self._header_size
+
+        if header_length <= 0:
+            raise ValueError("Invalid vault header length!")
+
+        if offset + header_length > len(raw_vault):
+            raise ValueError("Vault header length exceeds file size!")
+
+        # Get the header data
+        raw_metadata = raw_vault[offset:offset + header_length]
+        self.metadata = json.loads(raw_metadata.decode("utf-8"))
+
+        offset += header_length
 
         # Encrypted data should be the rest of the file.
-        encrypted_data = raw_vault[SALT_SIZE:]
+        encrypted_data = raw_vault[offset:]
+
+        if not encrypted_data:
+            raise ValueError("No encrypted data!")
+
+        # Obtain salt and nonce
+        self.salt = base64.urlsafe_b64decode(self.metadata['salt'])
+        self.nonce = base64.urlsafe_b64decode(self.metadata['cipher']['nonce'])
 
         # Ask user for their password using getpass and encode it to byte string. 
-        # NOTE: This will store a password string in memory until GC can take it away. 
         vault_password = getpass.getpass("Enter Your Password: ").encode()
 
-        # Attempt to get key using salt and password.
-        self.key = self._get_key(vault_password, self.salt)
+        # Attempt to get key using password.
+        self.key = self._get_key(vault_password, self.salt, self.metadata)
 
         # Try decrypt the data. If this fails at this stage, File I/O has failed or 
         # more likely the user has entered an incorrect password
         try:
-            self.data = json.loads(self.key.decrypt(encrypted_data))
-        except InvalidToken:
-            print_error("Invalid Password!")
+
+            decrypted_data = self.key.decrypt(self.nonce, encrypted_data, raw_metadata)
+            self.data = json.loads(decrypted_data.decode("utf-8"))
+        except InvalidTag:
+            print_error("Invalid password or vault file has been tampered with!")
             sys.exit(1)
 
         # This will only delete the reference to the byte string, not the value. Better then nothing lol.
@@ -105,44 +141,94 @@ class VaultContext:
             print_error("Passwords do not match!")
             sys.exit(1)
 
+        # Vault metadata fields:
+        vault_id = str(uuid.uuid4())
+        kdf_params = {
+            "iterations": 1,
+            "lanes": 4,
+            "memory_cost": 64 * 1024,
+            "length": 32
+        }
+
+        # Generate nonce
+        self.nonce = os.urandom(12)
+
         # Generate new salt
-        self.salt = os.urandom(SALT_SIZE)
+        self.salt = os.urandom(16)
+
+        # Build the vault header
+        self.metadata = {
+            "vault_id": vault_id,
+            "created_at": int(time.time()),
+            "updated_at": int(time.time()),
+            "kdf": {
+                "name": "argon2id",
+                "params": kdf_params,
+            },
+            "salt": base64.urlsafe_b64encode(self.salt).decode("ascii"),
+            "cipher": {
+                "name": "aesgcm",
+                "nonce": base64.urlsafe_b64encode(self.nonce).decode("ascii")
+            }
+        }
 
         # generate new key
-        self.key = self._get_key(p1, self.salt)
+        self.key = self._get_key(p1, self.salt, self.metadata)
 
         # create base empty dict
-        # TODO: This should be constructed elsewhere to allow for dict changes outside of this class
-        self.data = {"version": APP_VERSION, "presets": {"username": None, "email": None},"accounts": {}}
+        self.data = {
+            "version": APP_VERSION, 
+            "presets": {"username": None, "email": None},
+            "sync": {
+                "server_version_token": None,
+                "server_content_hash": None,
+                "last_synced_at": None
+            },
+            "accounts": {}}
 
         # Write changes to file
         self.save()
 
     def save(self):
-        """Basic atomic file saving. NOTE: No metadata preservation"""
-        # TODO: Work on a metadata preservation solution. I would assume linux users are only using this with the correct user premissions. 
+        """Basic atomic file saving."""
+
+        # AES-GCM requires a fresh nonce for every encryption with the same key.
+        self.nonce = os.urandom(12)
+        self.metadata["cipher"]["nonce"] = base64.urlsafe_b64encode(self.nonce).decode("ascii")
+
+        # Update the "updated_at" metadata
+        self.metadata["updated_at"] = int(time.time())
+
+        # Make sure the file path exists!
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+        _encoded_data = json.dumps(self.data, indent=4).encode("utf-8")
+        _encoded_metadata = json.dumps(self.metadata, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+        # pack the length into an big-endian (">") unsigned ("I") int (4 bytes) binary string
+        _header_length = struct.pack(">I", len(_encoded_metadata))
 
         # Encrypt data in class
-        encrypted_data = self.key.encrypt(json.dumps(self.data, indent=4).encode())
+        encrypted_data = self.key.encrypt(self.nonce, _encoded_data, _encoded_metadata)
 
         # Create a temp file
         temp = self.path.with_suffix('.tmp')
 
         # Write to temp file
-        temp.write_bytes(self.salt + encrypted_data)
+        temp.write_bytes(self._file_header + bytes([self._container_version]) + _header_length + _encoded_metadata + encrypted_data)
 
         # replace original with temp
         os.replace(temp, self.path)
 
-    def _get_key(self, password: bytes, salt: bytes) -> Fernet:
-        """Generate a Fernet object using kdf"""
-        # This might be a good place to implement other encryption types
+    def _get_key(self, password: bytes, salt: bytes, metadata: dict) -> AESGCM:
+        """Generate a AES object using kdf"""
 
-        # Generate Argon2 object using salt and argon_params
-        kdf = Argon2id(salt=salt, **ARGON2_PARAMS)
+        # Setup the kdf with the header info
+        kdf = Argon2id(salt=salt, **metadata['kdf']['params'])
 
+        return AESGCM(kdf.derive(password))
         # Return Fernet object. 
-        return Fernet(base64.urlsafe_b64encode(kdf.derive(password)))
+        #return Fernet(base64.urlsafe_b64encode(kdf.derive(password)))
     
 def handle_get(args, vault: VaultContext):
     service = args.service.lower()
@@ -247,6 +333,11 @@ def handle_list(args, vault: VaultContext):
     # TODO: List all accounts for east piping.
     # TODO: List all accounts with certain credentials
     # TODO: Search accounts?
+    
+    if not vault.data["accounts"]:
+        print_error(f"No accounts located!")
+        return
+
     for account, _ in vault.data["accounts"].items():
         print(account)
 
@@ -275,17 +366,85 @@ def handle_generate(args, vault: VaultContext):
     return
 
 def handle_preset(args, vault: VaultContext):
-
+    """Handles preset data in the vault, allowing for quick account creation"""
     if args.username is not None:
         vault.data['presets']["username"] = args.username
         print_msg(f"{args.username} set as a preset username")
 
     if args.email is not None:
-        vault.data['presets']["email"] = args.username
+        vault.data['presets']["email"] = args.email
         print_msg(f"{args.email} set as a preset email")
 
     vault.save()
     
+def handle_sync(args, vault: VaultContext):
+    """Handle API related functions."""
+    if args.new_token:
+        token = input("Enter the api token here: ")
+        save_api_token(token)
+        return
+
+    if args.push:
+        token = get_valid_api_token()
+        
+        headers = {'Authorization': f'Bearer {token}'}
+        response = requests.get(f"{SERVER_API_URL}/api/v1/vault/", headers=headers)
+
+        if response.status_code == 404:
+            # No server vault exists yet. First upload is okay.
+            api_push_binary(token, vault)
+            return
+
+        if response.status_code == 200:
+            server = response.json()
+
+            local_sync = vault.data.get("sync", {})
+            local_server_version = local_sync.get("server_version_token")
+
+            if local_server_version is None:
+                raise Exception("Server already has a vault, but this local vault has never synced. Pull first or resolve manually.")
+
+            if server["version_token"] != local_server_version:
+                raise Exception("Server vault has changed. Pull first before pushing.")
+
+            api_push_binary(token, vault)
+            return
+
+        if response.status_code in (401, 403):
+            raise Exception("Unauthorised token!")
+
+        raise Exception(f"Unexpected server response: {response.status_code}")
+
+    if args.pull:
+        token = get_valid_api_token()
+
+        headers = {"Authorization": f"Bearer {token}"}
+        response = requests.get(f"{SERVER_API_URL}/api/v1/vault/", headers=headers, timeout=15)
+
+        if response.status_code == 404:
+            raise Exception("No server vault exists. Try pushing first.")
+
+        if response.status_code in (401, 403):
+            raise Exception("Unauthorised token!")
+
+        if response.status_code != 200:
+            raise Exception(f"Unexpected server response: {response.status_code}")
+
+        server = response.json()
+
+        local_sync = vault.data.get("sync", {})
+        local_server_version = local_sync.get("server_version_token")
+
+        if local_server_version == server["version_token"]:
+            print_msg("Local file already up to date with server.")
+            return
+
+        api_pull_binary(token, vault, server)
+
+        print_msg("Vault pulled from server.")
+        return
+
+
 def main():
     # Init the parser
     parser = argparse.ArgumentParser(
@@ -329,13 +488,28 @@ def main():
     generate_parser.add_argument("-p", "--password-only", action='store_true', help="Output only the password.")
 
     # "presets" command subparser
-    preset_parser = subparsers.add_parser("set-preset", help="Setup a default username and email for generated accounts")
+    preset_parser = subparsers.add_parser("set-preset", help="Setup default usernames and emails for generated accounts")
     preset_parser.add_argument("-u", "--username", type=str, help="Set the default username")
     preset_parser.add_argument("-e", "--email", type=str, help="Set the default email")
 
+    # "sync" command subparser
+    sync_parser = subparsers.add_parser("sync", help="Connect to PW Vault clould service for password vault sync.")
+    sync_parser.add_argument("-n", "--new-token", action="store_true", help="Updates the API token.")
+    sync_parser.add_argument("-p", "--push", action="store_true", help="Push local vault to the server.")
+    sync_parser.add_argument("-u", "--pull", action="store_true", help="Pull latest vault from server.")
 
     # Arg parser
     args = parser.parse_args()
+
+    # functions that dont require vault decryption
+    if args.command == "generate":
+        handle_generate(args, None)
+        return 0
+
+    if args.command == "sync" and args.new_token:
+        handle_sync(args, None)
+        return 0
+
 
     # Init vault context
     vm = VaultContext(VAULT_PATH)
@@ -348,8 +522,8 @@ def main():
         "update": handle_update,
         "delete": handle_delete,
         "list": handle_list, 
-        "generate": handle_generate,
-        "set-preset": handle_preset
+        "set-preset": handle_preset,
+        "sync": handle_sync
     }
     
     handler = commands.get(args.command)

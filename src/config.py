@@ -1,0 +1,7 @@
+
+APP_NAME = "pw-vault"
+APP_AUTHOR = "cyptmos"
+APP_VERSION = "0.3"
+KEYRING_SERVICE = APP_NAME
+KEYRING_USERNAME = "api-token"
+SERVER_API_URL = 'http://127.0.0.1:8000'
