@@ -6,7 +6,7 @@ A lightweight CLI password manager built with Unix environments in mind. Designe
 
 ## Features
 - Argon2id to derive encryption keys.
-- Fernet (AES-128 in CBC mode with HMAC).
+- AES-GCM
 - Atomic saves.
 - Support for piping into other CLI tools.
 
@@ -58,7 +58,7 @@ To permenently delete a service, use the delete command.
 
 ### Generating Passwords
 The application will generate secure passwords depending on requirements.
-⚠️ The outputs the password to the stdout ⚠️
+⚠️ WARNING: this outputs a generated password to the stdout ⚠️
 
     ./pw-vault generate
 
@@ -67,10 +67,23 @@ If you use the same username and or email address, this can be presaved and used
 
     ./pw-vault set-preset -u my_username -e user@example.com
 
+### WIP: Syncing with cloud ⚠️. 
+Web application comming soon! To add your API token, use the following:
+
+    ./pw-vault sync -n
+
+Token storage is operating system dependent, with Windows and MacOS storing keys in the OS credential store. Linux is a little more tricky. If a credential store is not avaliable, a json file with chmod 600 premissions in the user directory. To push your vault to the server, call:
+
+    ./pw-vault sync -p
+
+To get the latest vault from the server:
+
+    ./pw-vault sync -u
+
 ## 🥅 Goals
 - [x] Basic CRUD CLI functionality
 - [x] Secure local file I/O
 - [x] Automated Password Generation and account presets
 - [ ] Notes and Secure File storage
-- [ ] Cloud Sync through web application
+- [x] Cloud Sync through web application
 - [ ] Optional 2FA support
